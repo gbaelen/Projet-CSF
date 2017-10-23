@@ -1,8 +1,9 @@
 clear;
+clc;
 Nu = 10;
 m = 1;
 M = 2;
-NBits = 10;
+NBits = 64;
 SizeCode = 64;
 NbChip = NBits*SizeCode;
 
@@ -10,7 +11,7 @@ message = zeros(Nu, NBits);
 code = zeros(Nu, SizeCode);
 message_encoded = zeros(1, NbChip);
 message_bruite = zeros(Nu, NbChip);
-received_message = zeros(Nu, NBits);
+received_message = zeros(1, NbChip);
 received = zeros(1, NBits);
 hadamard_code = hadamard(SizeCode);
 tmp_hadamard_table = hadamard_code;
@@ -43,22 +44,43 @@ end
 
 message_encoded = reshape(encoded, [1 NbChip]);
  
-%envoie de tous les signaux simultanément
+%canal de rayleigh
+t0 = 2*10^(-6);
+nb_path = 8;
+Te=t0/nb_path;
+for coef=1:nb_path
+    P(coef) = (2/t0)*(2 -((2*coef)*(Te/t0)));
+    sigma = P(coef)/2;
+    h(coef) = sqrt(sigma)*randn(1, 1);
+end
+
 %Bruitage canal
-for utilisateur=1:Nu
+for path=1:nb_path
     %Génération du bruit
     Eb = 1;
     SNR = 40;
     N0 = Eb * 10^(-SNR/10);
     wk = sqrt(N0)*randn(1, NbChip);
-    message_bruite(utilisateur, :) = message_encoded + wk;
+    message_bruite(path, :) = message_encoded .* h(path) + wk;
 end
 
 %%%%%%%%%%%%%%%%%%%     Reception    %%%%%%%%%%%%%%%%%
+% RAKE MRC
+branch=4;
+%% Maximum in h
+[sortedValues,sortIndex] = sort(h(:),'descend');
+maxCoef = sortedValues(1:branch);
+
+%% MRC
+for i=1:branch
+    alpha = abs(h(i))*exp(-1i*angle(h(i)));
+    received_message = received_message + message_bruite(i, :) .* alpha;
+end
+
 %Décodage Hadamard
 decoded = zeros(NBits, SizeCode);
-received = reshape(message_bruite(utilisateur,:), [NBits SizeCode]);
-for j=1:utilisateur
+for j=1:Nu
+    received = reshape(received_message, [NBits SizeCode]);
     for i=1:NBits
         decoded(j, i) = sum(received(i,:).*code(j,:))/64;
     end
