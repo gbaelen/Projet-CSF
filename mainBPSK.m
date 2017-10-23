@@ -57,8 +57,8 @@ end
 %%%%%%%%%%%%%%%%%%%     Reception    %%%%%%%%%%%%%%%%%
 %Décodage Hadamard
 decoded = zeros(NBits, SizeCode);
-received = reshape(message_bruite(utilisateur,:), [NBits SizeCode]);
-for j=1:utilisateur
+for j=1:Nu
+    received = reshape(message_bruite(Nu,:), [NBits SizeCode]);
     for i=1:NBits
         decoded(j, i) = sum(received(i,:).*code(j,:))/64;
     end
