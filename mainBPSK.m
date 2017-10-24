@@ -1,32 +1,40 @@
 clear;
 clc;
-Nu =6;
+hold off;
+
+Nu =1;
 m = 1;
 M = 2;
-NBits = 50000;
+NBits = 60000;
 SizeCode = 64;
 NbChip = NBits*SizeCode;
 Ph = 1;
 Eb = Ph*SizeCode/2;
+Ph_R = 0.8;
+Eb_R = Ph_R*SizeCode/2;
+branch=4;
 
+trameSize = 6000;
 CONST = [-1, 1];
 
 iter = 1;
 for SNR=1:8
     
-message = zeros(Nu, NBits);
-code = zeros(Nu, SizeCode);
-message_encoded = zeros(1, NbChip);
-received_message = zeros(1, NbChip);
-received = zeros(1, NBits);
-hadamard_code = hadamard(SizeCode);
-tmp_hadamard_table = hadamard_code;    
+    message = zeros(Nu, NBits);
+    code = zeros(Nu, SizeCode);
+    message_encoded = zeros(1, NbChip);
+    received_message = zeros(1, NbChip);
+    received = zeros(1, NBits);
+    hadamard_code = hadamard(SizeCode);
+    tmp_hadamard_table = hadamard_code;   
     
-err = 0;
-%%%%%%%%%%%%%%%%%%%%%%      Émission       %%%%%%%%%%%%%%%%%%%
+    user_index = 1;
+    AWGN_err = 0;
+    Rayleigh_err = 0;
+    %%%%%%%%%%%%%%%%%%%%%%      Émission       %%%%%%%%%%%%%%%%%%%
 
     for utilisateur=1:Nu
-        %génération du message binaire
+        %Génération du message binaire
         Bits = [ -1, 1 ];
         message_index = randi([0 1], [1 NBits]) + 1;
         message(utilisateur, :) = Bits(message_index);
@@ -49,29 +57,95 @@ err = 0;
 
     message_encoded = reshape(encoded, [1 NbChip]);
     
-    %canal de rayleigh
+    %découpage du message en trames de trameSize bits
+    trame = zeros(NbChip/trameSize, trameSize);
+    nbTrame = 0;
+    for i=1:trameSize:NbChip
+        nbTrame = nbTrame + 1;
+        trame(nbTrame,:) = message_encoded(i:i+trameSize-1);
+    end
+    
+    % canal de rayleigh
     t0 = 2*10^(-6);
     nb_path = 8;
-    Te=t0/nb_path;
+    Te=t0/nb_path;   
     for coef=1:nb_path
         P(coef) = (2/t0)*(2 -((2*coef)*(Te/t0)));
         sigma = P(coef)/2;
-        h(coef) = sqrt(sigma)*randn(1, 1);
+        C1(coef) = sqrt(sigma)*randn(1, 1);
+        C2(coef) = sqrt(sigma)*randn(1, 1);
+
+        Co(coef) = C1(coef) + 1i*C2(coef);
+    end
+    
+                                    %% Canal Rayleigh
+    
+    received_Y = zeros(1, NbChip);
+    
+    N0_R = Eb_R * 10^(-SNR/10);
+    wk = sqrt(N0_R)*randn(1, NbChip)+ 1i.*sqrt(N0_R)*randn(1, NbChip);
+    
+    for i=0:nbTrame-1
+        t = trame(i+1,:);
+        Y = filter(Co, 1, t);
+ 
+     %%%%%%%%%%%%%%%%%%%     Reception    %%%%%%%%%%%%%%%%%
+        %récupération des trames
+        received_Y(i*trameSize+1:i*trameSize+trameSize) = Y;
+    end
+    
+    received_Y_bruite = received_Y + wk;
+    
+    % RAKE MRC
+        % Maximum in h
+    [sortedValues,sortIndex] = sort(Co(:),'descend');
+    maxCoef = sortedValues(1:branch);
+     
+        % MRC
+    Y_message = zeros(1, NBits);
+    for i=1:branch
+        alpha = abs(Co(i))*exp(-1i*angle(Co(i)));
+        delayedCode = zeros(1, SizeCode);
+        for j=i:SizeCode
+            delayedCode(j) = code(user_index, j);
+        end
+        
+        %Décodage Hadamard
+        decoded_Y = zeros(Nu, NBits);
+        message_Y = reshape(received_Y_bruite, [NBits SizeCode]);
+        for j=1:Nu
+            for i=1:NBits
+                decoded_Y(j, i) = sum(message_Y(i,:).*delayedCode)/SizeCode;
+            end
+        end
+        
+        Y_message = Y_message + decoded_Y.*alpha;
     end
 
-    %Bruitage canal
+    %%Récupération du signal et débruitage
+    for k=1:NBits
+        for l=1:M
+            D(l) = abs((Y_message(user_index, k)) - CONST(l));
+        end
+
+        [X in] = min(D);
+        Y_dec(k) = CONST(in);
+    end
+
+    for i=1:NBits
+        if Y_dec(i) ~= message(user_index, i)
+            Rayleigh_err = Rayleigh_err + 1;
+        end
+    end
+    
+                                %% Canal AWGN
+    %Bruitage reception
     N0 = Eb * 10^(-SNR/10);
     wp = sqrt(N0)*randn(1, NbChip);
-    wq = sqrt(N0)*randn(1, NbChip);
-    wk = wp;
 
-    message_bruite = message_encoded + wk;
-
-
- %%%%%%%%%%%%%%%%%%%     Reception    %%%%%%%%%%%%%%%%%
-    %Décodage Hadamard
+    message_bruite = message_encoded + wp;
+    %Décodage Hadamard awgn
     decoded = zeros(Nu, NBits);
-    user_index = 1;
     received = reshape(message_bruite, [NBits SizeCode]);
     for j=1:Nu
         for i=1:NBits
@@ -79,7 +153,7 @@ err = 0;
         end
     end
 
-    %Récupération du signal et débruitage
+    %%Récupération du signal et débruitage
     for k=1:NBits
         for l=1:M
             D(l) = abs((decoded(user_index, k)) - CONST(l));
@@ -91,18 +165,24 @@ err = 0;
 
     for i=1:NBits
         if message_dec(i) ~= message(user_index, i)
-            err = err + 1;
+            AWGN_err = AWGN_err + 1;
         end
     end
-    Ps(iter)= err/NBits;
+    
+    %% Calcul d'erreur 
+    Ps_AWGN(iter)= AWGN_err/NBits;
+    Ps_Rayleigh(iter)= Rayleigh_err/NBits;
     Q(iter) = 0.5*erfc(sqrt(Eb/N0));
+    Q_R(iter) = 0.5*erfc(sqrt(Eb_R/N0_R));
     ebno(iter)=SNR;
     iter = iter+1;
 end
 
 
-figure(3);
-semilogy(ebno, Ps, '-s');
+figure(1);
+semilogy(ebno, Ps_AWGN, '-s');
 hold on;
 semilogy(ebno, Q, '-k');
+semilogy(ebno, Q_R, '-d');
+semilogy(ebno, Ps_Rayleigh, '-o');
 grid on;
