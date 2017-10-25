@@ -1,8 +1,10 @@
 NbChip = 64;
 nbCode = 6;
 
-%seed = randi([0 1], [1 10]);
-seed = [ 1 0 0 0 0 0 0 0 0 0 ];
+seed = [0 0 0 0 0 0 0 0 0 0];
+while sum(seed) == 0
+    seed = randi([0 1], [1 10]);
+end
 g1_bit = seed;
 g2_bit = seed;
 
