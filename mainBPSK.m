@@ -5,7 +5,7 @@ hold off;
 Nu =1;
 m = 1;
 M = 2;
-NBits = 60000;
+NBits = 1024;
 SizeCode = 64;
 NbChip = NBits*SizeCode;
 Ph = 1;
@@ -14,8 +14,10 @@ Ph_R = 0.8;
 Eb_R = Ph_R*SizeCode/2;
 branch=4;
 
-trameSize = 6000;
+trameSize = 1024;
 CONST = [-1, 1];
+
+gold_code = generateGold();
 
 iter = 1;
 for SNR=1:8
@@ -62,12 +64,14 @@ for SNR=1:8
     nbTrame = 0;
     for i=1:trameSize:NbChip
         nbTrame = nbTrame + 1;
-        trame(nbTrame,:) = message_encoded(i:i+trameSize-1);
+        trame(nbTrame,:) = message_encoded(i:i+trameSize-1) .* gold_code;
     end
+    
+                                    %% Canal Rayleigh
     
     % canal de rayleigh
     t0 = 2*10^(-6);
-    nb_path = 8;
+    nb_path = 4;
     Te=t0/nb_path;   
     for coef=1:nb_path
         P(coef) = (2/t0)*(2 -((2*coef)*(Te/t0)));
@@ -77,19 +81,17 @@ for SNR=1:8
 
         Co(coef) = C1(coef) + 1i*C2(coef);
     end
-    
-                                    %% Canal Rayleigh
-    
+                                    
     received_Y = zeros(1, NbChip);
     
     N0_R = Eb_R * 10^(-SNR/10);
-    wk = sqrt(N0_R)*randn(1, NbChip)+ 1i.*sqrt(N0_R)*randn(1, NbChip);
+    wk = sqrt(N0_R)*randn(1, NbChip) + 1i.*sqrt(N0_R)*randn(1, NbChip);
     
     for i=0:nbTrame-1
         t = trame(i+1,:);
         Y = filter(Co, 1, t);
  
-     %%%%%%%%%%%%%%%%%%%     Reception    %%%%%%%%%%%%%%%%%
+        %%%%%%%%%%%%%%%%%%%     Reception    %%%%%%%%%%%%%%%%%
         %récupération des trames
         received_Y(i*trameSize+1:i*trameSize+trameSize) = Y;
     end
@@ -105,24 +107,34 @@ for SNR=1:8
     Y_message = zeros(1, NBits);
     for i=1:branch
         alpha = abs(Co(i))*exp(-1i*angle(Co(i)));
-        delayedCode = zeros(1, SizeCode);
-        for j=i:SizeCode
-            delayedCode(j) = code(user_index, j);
+        delayedCode = zeros(1, 1024);
+        delayedCode(i:end) = gold_code(1:end-i+1);
+        if i > 1
+            delayedCode(1:i-1) = gold_code(end-i+2:end);
         end
+
+        %Dégoldage
+        degolded_Y = zeros(nbTrame,trameSize);
+        gold_message_Y = reshape(received_Y_bruite, [nbTrame trameSize]);
+        for i=1:nbTrame
+            degolded_Y(i,:) = gold_message_Y(i,:).*delayedCode;
+        end
+        
+        message_degolded = reshape(degolded_Y, [1 NbChip]);
         
         %Décodage Hadamard
         decoded_Y = zeros(Nu, NBits);
-        message_Y = reshape(received_Y_bruite, [NBits SizeCode]);
+        message_Y = reshape(message_degolded, [NBits SizeCode]);
         for j=1:Nu
             for i=1:NBits
-                decoded_Y(j, i) = sum(message_Y(i,:).*delayedCode)/SizeCode;
+                decoded_Y(j, i) = sum(message_Y(i,:).*code(user_index,:))/64;
             end
         end
         
         Y_message = Y_message + decoded_Y.*alpha;
     end
 
-    %%Récupération du signal et débruitage
+    %Récupération du signal et débruitage
     for k=1:NBits
         for l=1:M
             D(l) = abs((Y_message(user_index, k)) - CONST(l));
@@ -173,7 +185,6 @@ for SNR=1:8
     Ps_AWGN(iter)= AWGN_err/NBits;
     Ps_Rayleigh(iter)= Rayleigh_err/NBits;
     Q(iter) = 0.5*erfc(sqrt(Eb/N0));
-    Q_R(iter) = 0.5*erfc(sqrt(Eb_R/N0_R));
     ebno(iter)=SNR;
     iter = iter+1;
 end
@@ -183,6 +194,5 @@ figure(1);
 semilogy(ebno, Ps_AWGN, '-s');
 hold on;
 semilogy(ebno, Q, '-k');
-semilogy(ebno, Q_R, '-d');
 semilogy(ebno, Ps_Rayleigh, '-o');
 grid on;
